@@ -11,6 +11,44 @@ color_t get_rainbow_color(float s) {
   return RGBA32(r, g, b, 255);
 }
 
+static void t3d_mat4_transpose(T3DMat4 *matRes, const T3DMat4 *mat) {
+  matRes->m[0][0] = mat->m[0][0];
+  matRes->m[1][0] = mat->m[0][1];
+  matRes->m[2][0] = mat->m[0][2];
+  matRes->m[3][0] = mat->m[0][3];
+
+  matRes->m[0][1] = mat->m[1][0];
+  matRes->m[1][1] = mat->m[1][1];
+  matRes->m[2][1] = mat->m[1][2];
+  matRes->m[3][1] = mat->m[1][3];
+
+  matRes->m[0][2] = mat->m[2][0];
+  matRes->m[1][2] = mat->m[2][1];
+  matRes->m[2][2] = mat->m[2][2];
+  matRes->m[3][2] = mat->m[2][3];
+
+  matRes->m[0][3] = mat->m[3][0];
+  matRes->m[1][3] = mat->m[3][1];
+  matRes->m[2][3] = mat->m[3][2];
+  matRes->m[3][3] = mat->m[3][3];
+}
+
+static void t3d_mat4_mul_dir(T3DVec3* vecOut, const T3DMat4 *mat, const T3DVec3* vec)
+{
+  for(uint32_t i=0; i<3; i++) {
+    vecOut->v[i] = mat->m[0][i] * vec->v[0] +
+                   mat->m[1][i] * vec->v[1] +
+                   mat->m[2][i] * vec->v[2];
+  }
+}
+
+static void lightToModelSpace(T3DVec3* vecOut, const T3DMat4 *mat, const T3DVec3 *worldDir) {
+  // Extract inverse rotation matrix (transpose of the 3x3 part)
+  vecOut->x = worldDir->x * mat->m[0][0] + worldDir->y * mat->m[1][0] + worldDir->z * mat->m[2][0];
+  vecOut->y = worldDir->x * mat->m[0][1] + worldDir->y * mat->m[1][1] + worldDir->z * mat->m[2][1];
+  vecOut->z = worldDir->x * mat->m[0][2] + worldDir->y * mat->m[1][2] + worldDir->z * mat->m[2][2];
+}
+
 static void unpack_rgb555_to_normalized(float n[3], uint16_t rgb555) {
     // RRRRRGGGGGBBBBBX
     // FEDCBA9876543210
@@ -83,9 +121,14 @@ void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t
 }
 
 void update_palette(uint16_t* pal, fm_vec3_t* normals, const uint8_t *color, const T3DVec3 *dir) {
+  fm_vec3_t dirLocal;
+  dirLocal.x = -dir->x;
+  dirLocal.y = -dir->y;
+  dirLocal.z = -dir->z;
+
   for (int i=0;i<256;i++) {
     fm_vec3_t* n = &normals[i];
-    float dot = fm_vec3_dot(n, dir);
+    float dot = fm_vec3_dot(n, &dirLocal);
     if (dot < 0.0f) dot = 0.0f;
     int v = 255 * dot;
     pal[i] = conv_rgb5551(v,v,v,255);
@@ -148,13 +191,13 @@ int main()
       uint16_t rgb555 = palettes[i][j];
       float* n = normals[i][j].v;
       unpack_rgb555_to_normalized(n, rgb555);
-      debugf("0x%x -> ", palettes[i][j]);
-      debugf("R: %f G: %f B: %f\n", n[0], n[1], n[2]);
+      // debugf("0x%x -> ", palettes[i][j]);
+      // debugf("R: %f G: %f B: %f\n", n[0], n[1], n[2]);
     // // Pixels are in format RRRRRGGGGGBBBBBX
     // uint16_t rgb555 = palettes[i][j];
     // // Unpack to [-1, 1] ranged normals
     }
-    debugf("\n\n");
+    // debugf("\n\n");
   }
 
   float rotAngle = 0.0f;
@@ -182,8 +225,31 @@ int main()
     );
     t3d_mat4_to_fixed(modelMatFP, &modelMat);
 
+    T3DVec3 lightDirInModelSpace;
+    lightToModelSpace(&lightDirInModelSpace, &modelMat, &lightDirVec);
+    lightDirInModelSpace.x /= modelScale;
+    lightDirInModelSpace.y /= modelScale;
+    lightDirInModelSpace.z /= modelScale;
+
+    // T3DMat4 worldToModelMat;
+    // t3d_mat4_transpose(&worldToModelMat, &modelMat);
+    // t3d_mat4_mul_dir(&lightDirInModelSpace, &worldToModelMat, &lightDirVec);
+
+    debugf("lightDir:             (%.3f, %.3f, %.3f)\n",
+      lightDirVec.x,
+      lightDirVec.y,
+      lightDirVec.z
+    );
+    debugf("lightDirInModelSpace: (%.3f, %.3f, %.3f)\n",
+      lightDirInModelSpace.x,
+      lightDirInModelSpace.y,
+      lightDirInModelSpace.z
+    );
+
+
+
     for (int i = 0; i < TEXTURE_COUNT; i++) {
-        update_palette(palettes[i], normals[i], colorDir, &lightDirVec);
+        update_palette(palettes[i], normals[i], colorDir, &lightDirInModelSpace);
     }
 
     // ======== Draw ======== //
