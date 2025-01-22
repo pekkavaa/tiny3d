@@ -37,8 +37,8 @@ int main()
   // If you can't allocate uncached memory, remember to flush the cache after writing to it instead.
   T3DMat4FP* modelMatFP = malloc_uncached(sizeof(T3DMat4FP));
 
-  const T3DVec3 camPos = {{0,10.0f,40.0f}};
-  const T3DVec3 camTarget = {{0,0,0}};
+  const T3DVec3 camPos = {{0,10.0f,20.0f}};
+  const T3DVec3 camTarget = {{0,9.0f,0}};
 
   uint8_t colorAmbient[4] = {80, 80, 100, 0xFF};
   uint8_t colorDir[4]     = {0xEE, 0xAA, 0xAA, 0xFF};
@@ -47,7 +47,7 @@ int main()
   t3d_vec3_norm(&lightDirVec);
 
   // Load a model-file, this contains the geometry and some metadata
-  T3DModel *model = t3d_model_load("rom:/model.t3dm");
+  T3DModel *model = t3d_model_load("rom:/panel.t3dm");
 
   float rotAngle = 0.0f;
   rspq_block_t *dplDraw = NULL;
@@ -56,16 +56,19 @@ int main()
   {
     // ======== Update ======== //
     rotAngle -= 0.02f;
+    if (rotAngle < -3.14f) {
+        rotAngle = 0.0f;
+    }
     float modelScale = 0.1f;
 
-    t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(85.0f), 10.0f, 150.0f);
+    t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(65.0f), 10.0f, 150.0f);
     t3d_viewport_look_at(&viewport, &camPos, &camTarget, &(T3DVec3){{0,1,0}});
 
     // slowly rotate model, for more information on matrices and how to draw objects
     // see the example: "03_objects"
     t3d_mat4_from_srt_euler(&modelMat,
       (float[3]){modelScale, modelScale, modelScale},
-      (float[3]){0.0f, rotAngle*0.2f, rotAngle},
+      (float[3]){0.0f, rotAngle, 0.0f},
       (float[3]){0,0,0}
     );
     t3d_mat4_to_fixed(modelMatFP, &modelMat);
