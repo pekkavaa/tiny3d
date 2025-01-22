@@ -1,4 +1,5 @@
 #include <libdragon.h>
+#include <rdpq_tex.h>
 #include <t3d/t3d.h>
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
@@ -10,10 +11,49 @@ color_t get_rainbow_color(float s) {
   return RGBA32(r, g, b, 255);
 }
 
-/**
- * Simple example with a 3d-model file created in blender.
- * This uses the builtin model format for loading and drawing a model.
- */
+#define TEX_TOP (1)
+#define TEX_MID (2)
+#define TEX_OUTER (3)
+
+static uint16_t palettes[3][256] __attribute__((aligned(8)));
+static sprite_t* tex_top;
+static sprite_t* tex_mid;
+static sprite_t* tex_outer;
+
+// This is a callback for t3d_model_draw_custom, it is used when a texture in a model is set to dynamic/"reference"
+void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t *tileParams, rdpq_tile_t tile) {
+  // if(tile != TILE0)return; // this callback can happen 2 times per mesh, you are allowed to skip calls
+        debugf("dynamic tex: %lu\n", material->textureA.texReference);
+
+  // surface_t *offscreenSurf = (surface_t*)userData;
+  rdpq_sync_tile();
+
+  switch (material->textureA.texReference) {
+    case TEX_TOP:
+      rdpq_sprite_upload(tile, tex_top, tileParams);
+      break;
+    case TEX_MID:
+      rdpq_sprite_upload(tile, tex_mid, tileParams);
+      break;
+    case TEX_OUTER:
+      rdpq_sprite_upload(tile, tex_outer, tileParams);
+      break;
+    default:
+    debugf("Invalid reference %lu\n", material->textureA.texReference);
+    break;
+  }
+
+  // // upload a slice of the offscreen-buffer, the screen in the TV model is split into 4 materials for each section
+  // // if you are working with a small enough single texture, you can ofc use a normal sprite upload.
+  // // the quadrant is determined by the texture reference set in fast64, which can be used as an arbitrary value
+  // switch(material->textureA.texReference) { // Note: TILE1 is used here due to CC shenanigans
+  //   case 1: rdpq_tex_upload_sub(TILE1, offscreenSurf, NULL,  0,     0,     sHalf, sHalf); break;
+  //   case 2: rdpq_tex_upload_sub(TILE1, offscreenSurf, NULL,  sHalf, 0,     sFull, sHalf); break;
+  //   case 3: rdpq_tex_upload_sub(TILE1, offscreenSurf, NULL,  0,     sHalf, sHalf, sFull); break;
+  //   case 4: rdpq_tex_upload_sub(TILE1, offscreenSurf, NULL,  sHalf, sHalf, sFull, sFull); break;
+  // }
+}
+
 int main()
 {
 	debug_init_isviewer();
@@ -49,7 +89,13 @@ int main()
   // Load a model-file, this contains the geometry and some metadata
   T3DModel *model = t3d_model_load("rom:/panel.t3dm");
 
+
+  tex_top = sprite_load("rom:/normal_top_256.ci8.sprite");
+  tex_mid = sprite_load("rom:/normal_mid_256.ci8.sprite");
+  tex_outer = sprite_load("rom:/normal_outer_256.ci8.sprite");
+
   float rotAngle = 0.0f;
+  float tileOffset = 0.0f;
   rspq_block_t *dplDraw = NULL;
 
   for(;;)
@@ -85,23 +131,34 @@ int main()
     t3d_light_set_directional(0, colorDir, &lightDirVec);
     t3d_light_set_count(1);
 
-    // you can use the regular rdpq_* functions with t3d.
-    // In this example, the colored-band in the 3d-model is using the prim-color,
-    // even though the model is recorded, you change it here dynamically.
-    rdpq_set_prim_color(get_rainbow_color(rotAngle * 0.42f));
 
-    if(!dplDraw) {
-      rspq_block_begin();
 
-      t3d_matrix_push(modelMatFP);
-      // Draw the model, material settings (e.g. textures, color-combiner) are handled internally
-      t3d_model_draw(model);
-      t3d_matrix_pop(1);
-      dplDraw = rspq_block_end();
-    }
+    if (true) {
+        t3d_matrix_push(modelMatFP);
 
-    // for the actual draw, you can use the generic rspq-api.
-    rspq_block_run(dplDraw);
+        t3d_model_draw_custom(model, (T3DModelDrawConf){
+          .userData = &tileOffset,
+          .dynTextureCb = dynamic_tex_cb,
+        });
+        t3d_matrix_pop(1);
+    } else {
+      // you can use the regular rdpq_* functions with t3d.
+      // In this example, the colored-band in the 3d-model is using the prim-color,
+      // even though the model is recorded, you change it here dynamically.
+      rdpq_set_prim_color(get_rainbow_color(rotAngle * 0.42f));
+      if(!dplDraw) {
+        rspq_block_begin();
+
+        t3d_matrix_push(modelMatFP);
+        // Draw the model, material settings (e.g. textures, color-combiner) are handled internally
+        t3d_model_draw(model);
+        t3d_matrix_pop(1);
+        dplDraw = rspq_block_end();
+      }
+
+      // for the actual draw, you can use the generic rspq-api.
+      rspq_block_run(dplDraw);
+    } 
 
     rdpq_detach_show();
   }
