@@ -11,54 +11,87 @@ color_t get_rainbow_color(float s) {
   return RGBA32(r, g, b, 255);
 }
 
+static void unpack_rgb555_to_normalized(float n[3], uint16_t rgb555) {
+    // RRRRRGGGGGBBBBBX
+    // FEDCBA9876543210
+    rgb555 >>= 1;
+    // Extract R: bits 10-14
+    int r = (rgb555 >> 10) & 0x1F;
+    // Extract G: bits 5-9
+    int g = (rgb555 >> 5) & 0x1F;
+    // Extract B: bits 0-4
+    int b = rgb555 & 0x1F;
+
+    // Normalize to range [0, 1]
+    float nr = r / 31.0f;
+    float ng = g / 31.0f;
+    float nb = b / 31.0f;
+
+    // Scale to range [-1, 1]
+    n[0] = (nr * 2.0f) - 1.0f; // R
+    n[1] = (ng * 2.0f) - 1.0f; // G
+    n[2] = (nb * 2.0f) - 1.0f; // B
+}
+
+static uint16_t conv_rgb5551(uint8_t r8, uint8_t g8, uint8_t b8, uint8_t a8) {
+    uint16_t r=r8>>3, g=g8>>3, b=b8>>3, a=a8 >= 128?1:0;
+    return (r<<11) | (g<<6) | (b<<1) | a;
+}
+
 #define TEX_TOP (1)
 #define TEX_MID (2)
 #define TEX_OUTER (3)
+#define TEXTURE_COUNT (3)
 
-static uint16_t palettes[3][256] __attribute__((aligned(8)));
+static uint16_t palettes[TEXTURE_COUNT][256] __attribute__((aligned(8)));
+static fm_vec3_t normals[TEXTURE_COUNT][256] __attribute__((aligned(8)));
 static sprite_t* tex_top;
 static sprite_t* tex_mid;
 static sprite_t* tex_outer;
 
 // This is a callback for t3d_model_draw_custom, it is used when a texture in a model is set to dynamic/"reference"
 void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t *tileParams, rdpq_tile_t tile) {
-  // if(tile != TILE0)return; // this callback can happen 2 times per mesh, you are allowed to skip calls
+  if(tile != TILE0)return; // this callback can happen 2 times per mesh, you are allowed to skip calls
         debugf("dynamic tex: %lu\n", material->textureA.texReference);
 
-  // surface_t *offscreenSurf = (surface_t*)userData;
   rdpq_sync_tile();
-      // rdpq_mode_push();
-      // rdpq_mode_tlut(TLUT_RGBA16);
+  surface_t surf;
+  uint16_t* pal=0;
+
+  rdpq_mode_tlut(TLUT_RGBA16);
 
   switch (material->textureA.texReference) {
     case TEX_TOP:
-      rdpq_sprite_upload(tile, tex_top, tileParams);
+      surf = sprite_get_pixels(tex_top);
+      pal = palettes[0];
       break;
     case TEX_MID:
-      // rdpq_sprite_upload(tile, tex_mid, tileParams);
-      const surface_t surf = sprite_get_pixels(tex_mid);
-      rdpq_tex_upload_tlut(palettes[1], 0, 256);
-      rdpq_tex_upload(tile, &surf, tileParams);
+      surf = sprite_get_pixels(tex_mid);
+      pal = palettes[1];
       break;
     case TEX_OUTER:
-      rdpq_sprite_upload(tile, tex_outer, tileParams);
+      surf = sprite_get_pixels(tex_outer);
+      pal = palettes[2];
       break;
     default:
     debugf("Invalid reference %lu\n", material->textureA.texReference);
     break;
   }
 
-  // rdpq_mode_pop();
+  rdpq_tex_upload_tlut(pal, 0, 256);
+  rdpq_tex_upload(tile, &surf, tileParams);
+}
 
-  // // upload a slice of the offscreen-buffer, the screen in the TV model is split into 4 materials for each section
-  // // if you are working with a small enough single texture, you can ofc use a normal sprite upload.
-  // // the quadrant is determined by the texture reference set in fast64, which can be used as an arbitrary value
-  // switch(material->textureA.texReference) { // Note: TILE1 is used here due to CC shenanigans
-  //   case 1: rdpq_tex_upload_sub(TILE1, offscreenSurf, NULL,  0,     0,     sHalf, sHalf); break;
-  //   case 2: rdpq_tex_upload_sub(TILE1, offscreenSurf, NULL,  sHalf, 0,     sFull, sHalf); break;
-  //   case 3: rdpq_tex_upload_sub(TILE1, offscreenSurf, NULL,  0,     sHalf, sHalf, sFull); break;
-  //   case 4: rdpq_tex_upload_sub(TILE1, offscreenSurf, NULL,  sHalf, sHalf, sFull, sFull); break;
-  // }
+void update_palette(uint16_t* pal, fm_vec3_t* normals, const uint8_t *color, const T3DVec3 *dir) {
+  for (int i=0;i<256;i++) {
+    fm_vec3_t* n = &normals[i];
+    float dot = fm_vec3_dot(n, dir);
+    if (dot < 0.0f) dot = 0.0f;
+    int v = 255 * dot;
+    pal[i] = conv_rgb5551(v,v,v,255);
+  }
+
+  data_cache_hit_writeback_invalidate(pal, sizeof(uint16_t) * 256);
 }
 
 int main()
@@ -103,16 +136,23 @@ int main()
 
   sprite_t* sprites[] = {tex_top, tex_mid, tex_outer};
 
-  for (int i=0;i<3;i++) {
+  for (int i=0;i<TEXTURE_COUNT;i++) {
     assert(sprite_get_format(sprites[i]) == FMT_CI8);
     memcpy(palettes[i], sprite_get_palette(sprites[i]), sizeof(uint16_t) * 256);
     data_cache_hit_writeback_invalidate(palettes[i], sizeof(uint16_t) * 256);
   }
 
-  for (int i=0;i<3;i++) {
+  for (int i=0;i<TEXTURE_COUNT;i++) {
     debugf("Palette %d:\n", i);
-    for (int j=0;j<256;j++) {
-      debugf("0x%x ", palettes[i][j]);
+  for (int j=0;j<256;j++) {
+      uint16_t rgb555 = palettes[i][j];
+      float* n = normals[i][j].v;
+      unpack_rgb555_to_normalized(n, rgb555);
+      debugf("0x%x -> ", palettes[i][j]);
+      debugf("R: %f G: %f B: %f\n", n[0], n[1], n[2]);
+    // // Pixels are in format RRRRRGGGGGBBBBBX
+    // uint16_t rgb555 = palettes[i][j];
+    // // Unpack to [-1, 1] ranged normals
     }
     debugf("\n\n");
   }
@@ -142,6 +182,9 @@ int main()
     );
     t3d_mat4_to_fixed(modelMatFP, &modelMat);
 
+    for (int i = 0; i < TEXTURE_COUNT; i++) {
+        update_palette(palettes[i], normals[i], colorDir, &lightDirVec);
+    }
 
     // ======== Draw ======== //
     rdpq_attach(display_get(), display_get_zbuf());
