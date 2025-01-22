@@ -27,13 +27,18 @@ void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t
 
   // surface_t *offscreenSurf = (surface_t*)userData;
   rdpq_sync_tile();
+      // rdpq_mode_push();
+      // rdpq_mode_tlut(TLUT_RGBA16);
 
   switch (material->textureA.texReference) {
     case TEX_TOP:
       rdpq_sprite_upload(tile, tex_top, tileParams);
       break;
     case TEX_MID:
-      rdpq_sprite_upload(tile, tex_mid, tileParams);
+      // rdpq_sprite_upload(tile, tex_mid, tileParams);
+      const surface_t surf = sprite_get_pixels(tex_mid);
+      rdpq_tex_upload_tlut(palettes[1], 0, 256);
+      rdpq_tex_upload(tile, &surf, tileParams);
       break;
     case TEX_OUTER:
       rdpq_sprite_upload(tile, tex_outer, tileParams);
@@ -42,6 +47,8 @@ void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t
     debugf("Invalid reference %lu\n", material->textureA.texReference);
     break;
   }
+
+  // rdpq_mode_pop();
 
   // // upload a slice of the offscreen-buffer, the screen in the TV model is split into 4 materials for each section
   // // if you are working with a small enough single texture, you can ofc use a normal sprite upload.
@@ -94,6 +101,22 @@ int main()
   tex_mid = sprite_load("rom:/normal_mid_256.ci8.sprite");
   tex_outer = sprite_load("rom:/normal_outer_256.ci8.sprite");
 
+  sprite_t* sprites[] = {tex_top, tex_mid, tex_outer};
+
+  for (int i=0;i<3;i++) {
+    assert(sprite_get_format(sprites[i]) == FMT_CI8);
+    memcpy(palettes[i], sprite_get_palette(sprites[i]), sizeof(uint16_t) * 256);
+    data_cache_hit_writeback_invalidate(palettes[i], sizeof(uint16_t) * 256);
+  }
+
+  for (int i=0;i<3;i++) {
+    debugf("Palette %d:\n", i);
+    for (int j=0;j<256;j++) {
+      debugf("0x%x ", palettes[i][j]);
+    }
+    debugf("\n\n");
+  }
+
   float rotAngle = 0.0f;
   float tileOffset = 0.0f;
   rspq_block_t *dplDraw = NULL;
@@ -118,6 +141,7 @@ int main()
       (float[3]){0,0,0}
     );
     t3d_mat4_to_fixed(modelMatFP, &modelMat);
+
 
     // ======== Draw ======== //
     rdpq_attach(display_get(), display_get_zbuf());
