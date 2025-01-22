@@ -4,13 +4,6 @@
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
 
-static void lightToModelSpace(T3DVec3* vecOut, const T3DMat4 *mat, const T3DVec3 *worldDir) {
-  // Extract inverse rotation matrix (transpose of the 3x3 part)
-  vecOut->x = worldDir->x * mat->m[0][0] + worldDir->y * mat->m[1][0] + worldDir->z * mat->m[2][0];
-  vecOut->y = worldDir->x * mat->m[0][1] + worldDir->y * mat->m[1][1] + worldDir->z * mat->m[2][1];
-  vecOut->z = worldDir->x * mat->m[0][2] + worldDir->y * mat->m[1][2] + worldDir->z * mat->m[2][2];
-}
-
 static void unpack_rgb555_to_normalized(float n[3], uint16_t rgb555) {
     // RRRRRGGGGGBBBBBX
     // FEDCBA9876543210
@@ -48,6 +41,15 @@ static fm_vec3_t normals[TEXTURE_COUNT][256] __attribute__((aligned(8)));
 static sprite_t* tex_top;
 static sprite_t* tex_mid;
 static sprite_t* tex_outer;
+
+static void t3d_mat4_mul_dir(T3DVec3* vecOut, const T3DMat4 *mat, const T3DVec3* vec)
+{
+  for(uint32_t i=0; i<3; i++) {
+    vecOut->v[i] = mat->m[0][i] * vec->v[0] +
+                   mat->m[1][i] * vec->v[1] +
+                   mat->m[2][i] * vec->v[2];
+  }
+}
 
 // This is a callback for t3d_model_draw_custom, it is used when a texture in a model is set to dynamic/"reference"
 void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t *tileParams, rdpq_tile_t tile) {
@@ -120,6 +122,7 @@ int main()
 	debug_init_isviewer();
 	debug_init_usblog();
 	asset_init_compression(2);
+  joypad_init();
 
   dfs_init(DFS_DEFAULT_LOCATION);
 
@@ -154,7 +157,7 @@ int main()
   uint8_t colorAmbient[4] = {80, 80, 100, 0xFF};
   uint8_t colorDir[4]     = {0xEE, 0xAA, 0xAA, 0xFF};
 
-  T3DVec3 lightDirVec = {{0.0f, 0.0f, 1.0f}};
+  T3DVec3 lightDirVec = {{-1.0f, 1.0f, 1.0f}};
   t3d_vec3_norm(&lightDirVec);
 
   // Load a model-file, this contains the geometry and some metadata
@@ -182,24 +185,36 @@ int main()
       unpack_rgb555_to_normalized(n, rgb555);
 
       // Blender	+x	+z	+y
-      // GLTF     -x	+y	+z
+      // Tiny3D   +x	+y	-z
       normals[i][j] = (fm_vec3_t)
       {
-        .x = -n[0],
-        .y =  n[2],
-        .z =  n[1],
+        .x = n[0],
+        .y = n[2],
+        .z = -n[1],
       };
     }
   }
 
   float rotAngle = 0.0f;
   float tileOffset = 0.0f;
+  bool use_normalmap = true;
   rspq_block_t *dplDraw = NULL;
 
   for(;;)
   {
     // ======== Update ======== //
-    rotAngle -= 0.02f;
+    joypad_poll();
+    joypad_inputs_t joypad = joypad_get_inputs(JOYPAD_PORT_1);
+    joypad_buttons_t btn = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+    joypad_buttons_t held = joypad_get_buttons_held(JOYPAD_PORT_1);
+
+    if (btn.a) {
+      use_normalmap = !use_normalmap;
+    }
+
+    // rotAngle -= 0.02f;
+    if (held.c_left) rotAngle -= 0.02f;
+    if (held.c_right) rotAngle += 0.02f;
     if (rotAngle < -3.14f) {
         rotAngle = 0.0f;
     }
@@ -218,12 +233,16 @@ int main()
     );
     t3d_mat4_to_fixed(modelMatFP, &modelMat);
 
+    T3DMat4 inverseModelMat;
     T3DVec3 lightDirInModelSpace;
-    lightToModelSpace(&lightDirInModelSpace, &modelMat, &lightDirVec);
-    // lightDirInModelSpace.x *= invModelScale;
-    // lightDirInModelSpace.y *= invModelScale;
-    // lightDirInModelSpace.z *= invModelScale;
 
+    t3d_mat4_from_srt_euler(&inverseModelMat,
+      (float[3]){invModelScale, invModelScale, invModelScale},
+      (float[3]){0.0f, -rotAngle, 0.0f},
+      (float[3]){0,0,0}
+    );
+
+    t3d_mat4_mul_dir(&lightDirInModelSpace, &inverseModelMat, &lightDirVec);
     t3d_vec3_norm(&lightDirInModelSpace);
 
     if (true) {
@@ -255,19 +274,16 @@ int main()
     t3d_light_set_directional(0, colorDir, &lightDirVec);
     t3d_light_set_count(1);
 
-    T3DMaterial * mat = t3d_model_get_material(model, "f3dlite_material inner mid");
-    debugf("mat: %p\n", mat);
-
     if (true) {
         t3d_matrix_push(modelMatFP);
 
-        if (true) {
-        t3d_model_draw_custom(model, (T3DModelDrawConf){
-          .userData = &tileOffset,
-          .dynTextureCb = dynamic_tex_cb,
-        });
+        if (use_normalmap) {
+          t3d_model_draw_custom(model, (T3DModelDrawConf){
+            .userData = &tileOffset,
+            .dynTextureCb = dynamic_tex_cb,
+          });
         } else {
-          // t3d_model_draw(model);
+          t3d_model_draw(model2);
         }
 
         // t3d_matrix_push(scaleMatFP);
