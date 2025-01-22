@@ -4,44 +4,6 @@
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
 
-color_t get_rainbow_color(float s) {
-  float r = fm_sinf(s + 0.0f) * 127.0f + 128.0f;
-  float g = fm_sinf(s + 2.0f) * 127.0f + 128.0f;
-  float b = fm_sinf(s + 4.0f) * 127.0f + 128.0f;
-  return RGBA32(r, g, b, 255);
-}
-
-static void t3d_mat4_transpose(T3DMat4 *matRes, const T3DMat4 *mat) {
-  matRes->m[0][0] = mat->m[0][0];
-  matRes->m[1][0] = mat->m[0][1];
-  matRes->m[2][0] = mat->m[0][2];
-  matRes->m[3][0] = mat->m[0][3];
-
-  matRes->m[0][1] = mat->m[1][0];
-  matRes->m[1][1] = mat->m[1][1];
-  matRes->m[2][1] = mat->m[1][2];
-  matRes->m[3][1] = mat->m[1][3];
-
-  matRes->m[0][2] = mat->m[2][0];
-  matRes->m[1][2] = mat->m[2][1];
-  matRes->m[2][2] = mat->m[2][2];
-  matRes->m[3][2] = mat->m[2][3];
-
-  matRes->m[0][3] = mat->m[3][0];
-  matRes->m[1][3] = mat->m[3][1];
-  matRes->m[2][3] = mat->m[3][2];
-  matRes->m[3][3] = mat->m[3][3];
-}
-
-static void t3d_mat4_mul_dir(T3DVec3* vecOut, const T3DMat4 *mat, const T3DVec3* vec)
-{
-  for(uint32_t i=0; i<3; i++) {
-    vecOut->v[i] = mat->m[0][i] * vec->v[0] +
-                   mat->m[1][i] * vec->v[1] +
-                   mat->m[2][i] * vec->v[2];
-  }
-}
-
 static void lightToModelSpace(T3DVec3* vecOut, const T3DMat4 *mat, const T3DVec3 *worldDir) {
   // Extract inverse rotation matrix (transpose of the 3x3 part)
   vecOut->x = worldDir->x * mat->m[0][0] + worldDir->y * mat->m[1][0] + worldDir->z * mat->m[2][0];
@@ -90,7 +52,7 @@ static sprite_t* tex_outer;
 // This is a callback for t3d_model_draw_custom, it is used when a texture in a model is set to dynamic/"reference"
 void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t *tileParams, rdpq_tile_t tile) {
   if(tile != TILE0)return; // this callback can happen 2 times per mesh, you are allowed to skip calls
-        debugf("dynamic tex: %lu\n", material->textureA.texReference);
+    // debugf("dynamic tex: %lu\n", material->textureA.texReference);
 
   rdpq_sync_tile();
   surface_t surf;
@@ -121,16 +83,32 @@ void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t
 }
 
 void update_palette(uint16_t* pal, fm_vec3_t* normals, const uint8_t *color, const T3DVec3 *dir) {
-  fm_vec3_t dirLocal;
-  dirLocal.x = -dir->x;
-  dirLocal.y = -dir->y;
-  dirLocal.z = -dir->z;
 
   for (int i=0;i<256;i++) {
     fm_vec3_t* n = &normals[i];
-    float dot = fm_vec3_dot(n, &dirLocal);
-    if (dot < 0.0f) dot = 0.0f;
-    int v = 255 * dot;
+    float NdotL = fm_vec3_dot(n, dir);
+    float diffuse = fmax(NdotL, 0.0f);
+
+    // Reflection vector
+    fm_vec3_t reflectDir;
+    reflectDir.x = dir->x - 2 * NdotL * n->x;
+    reflectDir.y = dir->y - 2 * NdotL * n->y;
+    reflectDir.z = dir->z - 2 * NdotL * n->z;
+
+    // Normalize the reflection vector
+    fm_vec3_norm(&reflectDir, &reflectDir);
+
+    // Specular component
+    const float shininess = 1.f;
+    float RdotV = fm_vec3_dot(&reflectDir, dir);
+    float specular = powf(fmax(RdotV, 0.0f), shininess);
+
+    // dot = 0.5f*(dot+1.0f);
+    float intensity = 1.0f * diffuse + 0.0f * specular;
+    if (intensity < 0.0f) intensity = 0.0f;
+    if (intensity > 1.0f) intensity = 1.0f;
+
+    int v = 255 * intensity;
     pal[i] = conv_rgb5551(v,v,v,255);
   }
 
@@ -160,17 +138,28 @@ int main()
   // If you can't allocate uncached memory, remember to flush the cache after writing to it instead.
   T3DMat4FP* modelMatFP = malloc_uncached(sizeof(T3DMat4FP));
 
+  T3DMat4 scaleMat;
+  t3d_mat4_identity(&scaleMat);
+  T3DMat4FP* scaleMatFP = malloc_uncached(sizeof(T3DMat4FP));
+    {
+      float s=0.3f;
+    t3d_mat4_scale(&scaleMat, s, s, s);
+    t3d_mat4_to_fixed(scaleMatFP, &scaleMat);
+    }
+
+
   const T3DVec3 camPos = {{0,10.0f,20.0f}};
   const T3DVec3 camTarget = {{0,9.0f,0}};
 
   uint8_t colorAmbient[4] = {80, 80, 100, 0xFF};
   uint8_t colorDir[4]     = {0xEE, 0xAA, 0xAA, 0xFF};
 
-  T3DVec3 lightDirVec = {{-1.0f, 1.0f, 1.0f}};
+  T3DVec3 lightDirVec = {{0.0f, 0.0f, 1.0f}};
   t3d_vec3_norm(&lightDirVec);
 
   // Load a model-file, this contains the geometry and some metadata
   T3DModel *model = t3d_model_load("rom:/panel.t3dm");
+  T3DModel *model2 = t3d_model_load("rom:/panel_notextures.t3dm");
 
 
   tex_top = sprite_load("rom:/normal_top_256.ci8.sprite");
@@ -189,15 +178,18 @@ int main()
     debugf("Palette %d:\n", i);
   for (int j=0;j<256;j++) {
       uint16_t rgb555 = palettes[i][j];
-      float* n = normals[i][j].v;
+      float n[3];
       unpack_rgb555_to_normalized(n, rgb555);
-      // debugf("0x%x -> ", palettes[i][j]);
-      // debugf("R: %f G: %f B: %f\n", n[0], n[1], n[2]);
-    // // Pixels are in format RRRRRGGGGGBBBBBX
-    // uint16_t rgb555 = palettes[i][j];
-    // // Unpack to [-1, 1] ranged normals
+
+      // Blender	+x	+z	+y
+      // GLTF     -x	+y	+z
+      normals[i][j] = (fm_vec3_t)
+      {
+        .x = -n[0],
+        .y =  n[2],
+        .z =  n[1],
+      };
     }
-    // debugf("\n\n");
   }
 
   float rotAngle = 0.0f;
@@ -212,6 +204,7 @@ int main()
         rotAngle = 0.0f;
     }
     float modelScale = 0.1f;
+    float invModelScale = 1.0f/modelScale;
 
     t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(65.0f), 10.0f, 150.0f);
     t3d_viewport_look_at(&viewport, &camPos, &camTarget, &(T3DVec3){{0,1,0}});
@@ -227,26 +220,24 @@ int main()
 
     T3DVec3 lightDirInModelSpace;
     lightToModelSpace(&lightDirInModelSpace, &modelMat, &lightDirVec);
-    lightDirInModelSpace.x /= modelScale;
-    lightDirInModelSpace.y /= modelScale;
-    lightDirInModelSpace.z /= modelScale;
+    // lightDirInModelSpace.x *= invModelScale;
+    // lightDirInModelSpace.y *= invModelScale;
+    // lightDirInModelSpace.z *= invModelScale;
 
-    // T3DMat4 worldToModelMat;
-    // t3d_mat4_transpose(&worldToModelMat, &modelMat);
-    // t3d_mat4_mul_dir(&lightDirInModelSpace, &worldToModelMat, &lightDirVec);
+    t3d_vec3_norm(&lightDirInModelSpace);
 
-    debugf("lightDir:             (%.3f, %.3f, %.3f)\n",
-      lightDirVec.x,
-      lightDirVec.y,
-      lightDirVec.z
-    );
-    debugf("lightDirInModelSpace: (%.3f, %.3f, %.3f)\n",
-      lightDirInModelSpace.x,
-      lightDirInModelSpace.y,
-      lightDirInModelSpace.z
-    );
-
-
+    if (true) {
+      debugf("lightDir:             (%.3f, %.3f, %.3f)\n",
+        lightDirVec.x,
+        lightDirVec.y,
+        lightDirVec.z
+      );
+      debugf("lightDirInModelSpace: (%.3f, %.3f, %.3f)\n",
+        lightDirInModelSpace.x,
+        lightDirInModelSpace.y,
+        lightDirInModelSpace.z
+      );
+    }
 
     for (int i = 0; i < TEXTURE_COUNT; i++) {
         update_palette(palettes[i], normals[i], colorDir, &lightDirInModelSpace);
@@ -264,21 +255,31 @@ int main()
     t3d_light_set_directional(0, colorDir, &lightDirVec);
     t3d_light_set_count(1);
 
-
+    T3DMaterial * mat = t3d_model_get_material(model, "f3dlite_material inner mid");
+    debugf("mat: %p\n", mat);
 
     if (true) {
         t3d_matrix_push(modelMatFP);
 
+        if (true) {
         t3d_model_draw_custom(model, (T3DModelDrawConf){
           .userData = &tileOffset,
           .dynTextureCb = dynamic_tex_cb,
         });
+        } else {
+          // t3d_model_draw(model);
+        }
+
+        // t3d_matrix_push(scaleMatFP);
+        // t3d_model_draw(model2);
+        // t3d_matrix_pop(1);
+
         t3d_matrix_pop(1);
     } else {
       // you can use the regular rdpq_* functions with t3d.
       // In this example, the colored-band in the 3d-model is using the prim-color,
       // even though the model is recorded, you change it here dynamically.
-      rdpq_set_prim_color(get_rainbow_color(rotAngle * 0.42f));
+      // rdpq_set_prim_color(get_rainbow_color(rotAngle * 0.42f));
       if(!dplDraw) {
         rspq_block_begin();
 
