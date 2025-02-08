@@ -4,6 +4,67 @@
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
 
+typedef struct codebook_palette_s {
+    uint16_t colors[256];
+    int32_t num_colors;
+    uint8_t normals[3*256];
+} codebook_palette_t;
+
+typedef struct normalmap_set_s {
+    codebook_palette_t palette;
+    int32_t num_maps;
+    surface_t** maps;
+} normalmap_set_t;
+
+#define MAX_SPRITES (100)
+
+static sprite_t normalmap_sprites[MAX_SPRITES];
+
+// Serialization code:
+// import struct
+// codebook_path = str((filesystem_dir / modelname).with_suffix(".normals"))
+// print(f"{codebook_path=}")
+// with open(codebook_path, "wb") as f:
+//     # First dump palette in big-endian so that it can be read in with a single fread on the C side
+//     f.write(struct.pack(">256H", *normal_map_set.palette.colors))
+//     # Then dump the number of colors
+//     f.write(struct.pack(">i", normal_map_set.palette.num_colors))
+//     # Then dump the normals in big-endian so that it can be read in with a single fread on the C side
+//     f.write(struct.pack(">256B", *normal_map_set.palette.normals.reshape(-1)))
+//     # Now write placeholders for every string in 'sprite_names' while keeping track of file offsets
+//     offsets = []
+//     for name in normal_map_set.maps:
+//         offsets.append(f.tell())
+//         f.write(b'\x00' * 4) # Placeholder for the length of the string
+
+//     # Then write all strings but seek back to matching file offets to write the actual string start offset
+//     for i, name in enumerate(normal_map_set.maps):
+//         print("writing", i, name)
+//         old = f.tell()
+//         f.seek(offsets[i])
+//         f.write(struct.pack(">i", old)) # Write the actual string start offset
+//         f.seek(old)
+//         print("name:", name.encode('utf-8'))
+//         f.write(name.encode('utf-8'))
+//         f.write(b'\x00') # NUL terminated
+
+
+void normalmap_set_read(normalmap_set_t* set, FILE* fp) {
+    // Read the whole struct with one fread
+    fread(set, sizeof(normalmap_set_t), 1, fp);
+    set->maps = calloc(set->num_maps, sizeof(set->maps[0]));
+    fread(set->maps, sizeof(set->maps[0]), set->num_maps, fp);
+    TODO fix deserialization
+    for (int32_t i=0;i<set->num_maps;i++) {
+        // fseek(fp, (uint32_t)set->maps[i], SEEK_SET);
+        debugf("%ld: ofs=%lu\n", i, (uint32_t)set->maps[i]);
+        // normalmap_sprites[i] = 
+    }
+}
+
+
+
+
 static void unpack_rgb555_to_normalized(float n[3], uint16_t rgb555) {
     // RRRRRGGGGGBBBBBX
     // FEDCBA9876543210
@@ -110,6 +171,9 @@ void update_palette(uint16_t* pal, fm_vec3_t* normals, const uint8_t *color, con
     if (intensity < 0.0f) intensity = 0.0f;
     if (intensity > 1.0f) intensity = 1.0f;
 
+    // float fresnel = fmax(NdotL - 0.75, 0.0f); // FIXME fresnel needs a vector that points to camera
+    // intensity = 4.0f*fresnel;
+
     int v = 255 * intensity;
     pal[i] = conv_rgb5551(v,v,v,255);
   }
@@ -126,7 +190,8 @@ int main()
 
   dfs_init(DFS_DEFAULT_LOCATION);
 
-  display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE_ANTIALIAS);
+  // display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE_ANTIALIAS);
+  display_init(RESOLUTION_512x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE_ANTIALIAS);
 
   rdpq_init();
 
@@ -151,7 +216,7 @@ int main()
     }
 
 
-  const T3DVec3 camPos = {{0,10.0f,20.0f}};
+  const T3DVec3 camPos = {{0,10.0f,40.0f}};
   const T3DVec3 camTarget = {{0,9.0f,0}};
 
   uint8_t colorAmbient[4] = {80, 80, 100, 0xFF};
@@ -160,14 +225,34 @@ int main()
   T3DVec3 lightDirVec = {{-1.0f, 1.0f, 1.0f}};
   t3d_vec3_norm(&lightDirVec);
 
+  FILE* fp = fopen("rom:/bake_log.txt", "r");
+  if (fp) {
+    debugf("Baking log:\n");
+    char buffer[1024];
+    while (fgets(buffer, sizeof(buffer), fp)) {
+        debugf("%s", buffer);
+    }
+    fclose(fp);
+  }
+
   // Load a model-file, this contains the geometry and some metadata
-  T3DModel *model = t3d_model_load("rom:/panel.t3dm");
+  T3DModel *model = t3d_model_load("rom:/plane.t3dm");
   T3DModel *model2 = t3d_model_load("rom:/panel_notextures.t3dm");
+  normalmap_set_t plane_set={};
+  {
+    FILE* fp = fopen("rom:/plane.normals", "rb");
+  normalmap_set_read(&plane_set, fp);
+  fclose(fp);
+  debugf("plane set num_colors %ld\n", plane_set.palette.num_colors);
+  debugf("plane set num maps %ld\n", plane_set.num_maps);
+  }
 
-
-  tex_top = sprite_load("rom:/normal_top_256.ci8.sprite");
-  tex_mid = sprite_load("rom:/normal_mid_256.ci8.sprite");
-  tex_outer = sprite_load("rom:/normal_outer_256.ci8.sprite");
+  tex_top = sprite_load("rom:/normal_top_256_blended.ci8.sprite");
+  tex_mid = sprite_load("rom:/normal_mid_256_blended.ci8.sprite");
+  tex_outer = sprite_load("rom:/normal_outer_256_blended.ci8.sprite");
+//   tex_top = sprite_load("rom:/normal_top_256.ci8.sprite");
+//   tex_mid = sprite_load("rom:/normal_mid_256.ci8.sprite");
+//   tex_outer = sprite_load("rom:/normal_outer_256.ci8.sprite");
 
   sprite_t* sprites[] = {tex_top, tex_mid, tex_outer};
 
@@ -192,10 +277,12 @@ int main()
         .y = n[2],
         .z = -n[1],
       };
+
+      fm_vec3_norm(&normals[i][j], &normals[i][j]); // compressed image may not contain unit vectors
     }
   }
 
-  float rotAngle = 0.0f;
+  float rotAngle = -0.65f;
   float tileOffset = 0.0f;
   bool use_normalmap = true;
   rspq_block_t *dplDraw = NULL;
@@ -221,14 +308,14 @@ int main()
     float modelScale = 0.1f;
     float invModelScale = 1.0f/modelScale;
 
-    t3d_viewport_set_projection(&viewport, T3D_DEG_TO_RAD(65.0f), 10.0f, 150.0f);
+  t3d_viewport_set_perspective(&viewport, T3D_DEG_TO_RAD(65.0f), 4.0f/3.0f, 10.0f, 150.0f);
     t3d_viewport_look_at(&viewport, &camPos, &camTarget, &(T3DVec3){{0,1,0}});
 
     // slowly rotate model, for more information on matrices and how to draw objects
     // see the example: "03_objects"
     t3d_mat4_from_srt_euler(&modelMat,
       (float[3]){modelScale, modelScale, modelScale},
-      (float[3]){0.0f, rotAngle, 0.0f},
+      (float[3]){-FM_PI*0.5f, rotAngle, 0.0f},
       (float[3]){0,0,0}
     );
     t3d_mat4_to_fixed(modelMatFP, &modelMat);
@@ -236,16 +323,17 @@ int main()
     T3DMat4 inverseModelMat;
     T3DVec3 lightDirInModelSpace;
 
+    //FIXME: use proper inverse
     t3d_mat4_from_srt_euler(&inverseModelMat,
       (float[3]){invModelScale, invModelScale, invModelScale},
-      (float[3]){0.0f, -rotAngle, 0.0f},
+      (float[3]){0.0, -rotAngle, 0.0f},
       (float[3]){0,0,0}
     );
 
     t3d_mat4_mul_dir(&lightDirInModelSpace, &inverseModelMat, &lightDirVec);
     t3d_vec3_norm(&lightDirInModelSpace);
 
-    if (true) {
+    if (false) {
       debugf("lightDir:             (%.3f, %.3f, %.3f)\n",
         lightDirVec.x,
         lightDirVec.y,
@@ -281,6 +369,8 @@ int main()
           t3d_model_draw_custom(model, (T3DModelDrawConf){
             .userData = &tileOffset,
             .dynTextureCb = dynamic_tex_cb,
+            // TODO set material to additive blend via rdpq
+            // .tileCb = tile_cb
           });
         } else {
           t3d_model_draw(model2);
