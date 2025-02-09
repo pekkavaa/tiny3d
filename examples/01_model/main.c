@@ -34,11 +34,10 @@ normalmap_set_t* normalmap_set_read(FILE* fp) {
     debugf("numbytes: %u\n", numbytes);
     uint8_t* data = malloc(numbytes);
 
-    // Read the whole struct with one fread
     fread(data, 1, numbytes, fp);
 
     normalmap_set_t* set = (normalmap_set_t*)&data[0];
-    // fread(set, sizeof(normalmap_set_t), 1, fp);
+
     debugf("num maps: %ld\n", set->num_maps);
     debugf("maps content before: %lu\n", (uint32_t)set->paths);
     assert((int32_t)set->paths == 8);
@@ -117,29 +116,35 @@ void dynamic_tex_cb(void* userData, const T3DMaterial* material, rdpq_texparms_t
   if(tile != TILE0)return; // this callback can happen 2 times per mesh, you are allowed to skip calls
     // debugf("dynamic tex: %lu\n", material->textureA.texReference);
 
+  normalmap_set_t* plane_set = (normalmap_set_t*)userData;
+
   rdpq_sync_tile();
   surface_t surf;
   uint16_t* pal=0;
 
   rdpq_mode_tlut(TLUT_RGBA16);
+  debugf("texReference: %lu\n", material->textureA.texReference);
+  int idx = material->textureA.texReference - 1;
+  surf = sprite_get_pixels(plane_set->sprites[idx]);
+  pal = plane_set->palette.colors;
 
-  switch (material->textureA.texReference) {
-    case TEX_TOP:
-      surf = sprite_get_pixels(tex_top);
-      pal = palettes[0];
-      break;
-    case TEX_MID:
-      surf = sprite_get_pixels(tex_mid);
-      pal = palettes[1];
-      break;
-    case TEX_OUTER:
-      surf = sprite_get_pixels(tex_outer);
-      pal = palettes[2];
-      break;
-    default:
-    debugf("Invalid reference %lu\n", material->textureA.texReference);
-    break;
-  }
+  // switch (material->textureA.texReference) {
+  //   case TEX_TOP:
+  //     surf = sprite_get_pixels(tex_top);
+  //     pal = palettes[0];
+  //     break;
+  //   case TEX_MID:
+  //     surf = sprite_get_pixels(tex_mid);
+  //     pal = palettes[1];
+  //     break;
+  //   case TEX_OUTER:
+  //     surf = sprite_get_pixels(tex_outer);
+  //     pal = palettes[2];
+  //     break;
+  //   default:
+  //   debugf("Invalid reference %lu\n", material->textureA.texReference);
+  //   break;
+  // }
 
   rdpq_tex_upload_tlut(pal, 0, 256);
   rdpq_tex_upload(tile, &surf, tileParams);
@@ -237,7 +242,6 @@ int main()
 
   // Load a model-file, this contains the geometry and some metadata
   T3DModel *model = t3d_model_load("rom:/plane.t3dm");
-  T3DModel *model2 = t3d_model_load("rom:/panel_notextures.t3dm");
   normalmap_set_t* plane_set=NULL;
   {
     FILE* fp = fopen("rom:/plane.normals", "rb");
@@ -346,9 +350,11 @@ int main()
       );
     }
 
-    for (int i = 0; i < TEXTURE_COUNT; i++) {
-        update_palette(palettes[i], normals[i], colorDir, &lightDirInModelSpace);
-    }
+    // for (int i = 0; i < TEXTURE_COUNT; i++) {
+    //     update_palette(palettes[i], normals[i], colorDir, &lightDirInModelSpace);
+    // }
+    
+    update_palette(plane_set->palette.colors, (fm_vec3_t*)plane_set->palette.normals, colorDir, &lightDirInModelSpace);
 
     // ======== Draw ======== //
     rdpq_attach(display_get(), display_get_zbuf());
@@ -367,18 +373,13 @@ int main()
 
         if (use_normalmap) {
           t3d_model_draw_custom(model, (T3DModelDrawConf){
-            .userData = &tileOffset,
+            .userData = plane_set,
             .dynTextureCb = dynamic_tex_cb,
             // TODO set material to additive blend via rdpq
             // .tileCb = tile_cb
           });
-        } else {
-          t3d_model_draw(model2);
         }
 
-        // t3d_matrix_push(scaleMatFP);
-        // t3d_model_draw(model2);
-        // t3d_matrix_pop(1);
 
         t3d_matrix_pop(1);
     } else {
