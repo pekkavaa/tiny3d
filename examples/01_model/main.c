@@ -13,7 +13,7 @@ typedef struct codebook_palette_s {
 typedef struct normalmap_set_s {
     codebook_palette_t palette;
     int32_t num_maps;
-    surface_t** maps;
+    const char** maps;
 } normalmap_set_t;
 
 #define MAX_SPRITES (100)
@@ -49,17 +49,45 @@ static sprite_t normalmap_sprites[MAX_SPRITES];
 //         f.write(b'\x00') # NUL terminated
 
 
-void normalmap_set_read(normalmap_set_t* set, FILE* fp) {
+normalmap_set_t* normalmap_set_read(FILE* fp) {
+    long start = ftell(fp);
+    fseek(fp, 0, SEEK_END);
+    size_t numbytes = ftell(fp) - start;
+    fseek(fp, start, SEEK_SET);
+    debugf("numbytes: %u\n", numbytes);
+    uint8_t* data = malloc(numbytes);
+
     // Read the whole struct with one fread
-    fread(set, sizeof(normalmap_set_t), 1, fp);
-    set->maps = calloc(set->num_maps, sizeof(set->maps[0]));
-    fread(set->maps, sizeof(set->maps[0]), set->num_maps, fp);
-    TODO fix deserialization
-    for (int32_t i=0;i<set->num_maps;i++) {
+    debugf("sizes:\n");
+    debugf("%u\n", sizeof(codebook_palette_t));
+    debugf("offsets:\n");
+    debugf("%u\n", offsetof(codebook_palette_t, colors));
+    debugf("%u\n", offsetof(codebook_palette_t, num_colors));
+    debugf("%u\n", offsetof(codebook_palette_t, normals));
+    debugf("%u\n", offsetof(normalmap_set_t, num_maps));
+    debugf("%u\n", offsetof(normalmap_set_t, maps));
+    fread(data, 1, numbytes, fp);
+
+    normalmap_set_t* set = (normalmap_set_t*)&data[0];
+    // fread(set, sizeof(normalmap_set_t), 1, fp);
+    debugf("num maps: %ld\n", set->num_maps);
+    debugf("maps content before: %lu\n", (uint32_t)set->maps);
+    assert((int32_t)set->maps == 4);
+    debugf("data: %p\n", data);
+    set->maps = (const char**)((uint8_t*)&set->maps + (int32_t)set->maps);
+    debugf("maps content after: %lu = %p, diff: %d\n", (uint32_t)set->maps, (void*)set->maps, (uint8_t*)set->maps - data);
+
+    // set->maps = calloc(set->num_maps, sizeof(set->maps[0]));
+    // debugf("tell: %ld\n", ftell(fp));
+    // fread(set->maps, sizeof(set->maps[0]), set->num_maps, fp);
+    for (int32_t i = 0; i < set->num_maps; i++) {
         // fseek(fp, (uint32_t)set->maps[i], SEEK_SET);
         debugf("%ld: ofs=%lu\n", i, (uint32_t)set->maps[i]);
-        // normalmap_sprites[i] = 
+        set->maps[i] = (const char*)((uint8_t*)&set->maps[i] + (int32_t)set->maps[i]);
+        debugf("%ld: ofs=%lu, '%s'\n", i, (uint32_t)set->maps[i], set->maps[i]);
+        // normalmap_sprites[i] =
     }
+    return set;
 }
 
 
@@ -238,13 +266,13 @@ int main()
   // Load a model-file, this contains the geometry and some metadata
   T3DModel *model = t3d_model_load("rom:/plane.t3dm");
   T3DModel *model2 = t3d_model_load("rom:/panel_notextures.t3dm");
-  normalmap_set_t plane_set={};
+  normalmap_set_t* plane_set=NULL;
   {
     FILE* fp = fopen("rom:/plane.normals", "rb");
-  normalmap_set_read(&plane_set, fp);
+   plane_set = normalmap_set_read(fp);
   fclose(fp);
-  debugf("plane set num_colors %ld\n", plane_set.palette.num_colors);
-  debugf("plane set num maps %ld\n", plane_set.num_maps);
+  debugf("plane set num_colors %ld\n", plane_set->palette.num_colors);
+  debugf("plane set num maps %ld\n", plane_set->num_maps);
   }
 
   tex_top = sprite_load("rom:/normal_top_256_blended.ci8.sprite");
