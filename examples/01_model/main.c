@@ -7,46 +7,23 @@
 typedef struct codebook_palette_s {
     uint16_t colors[256];
     int32_t num_colors;
-    uint8_t normals[3*256];
+    float normals[3*256];
 } codebook_palette_t;
 
 typedef struct normalmap_set_s {
     codebook_palette_t palette;
     int32_t num_maps;
-    const char** maps;
+    const char** paths;
+    sprite_t** sprites;
 } normalmap_set_t;
+
 
 #define MAX_SPRITES (100)
 
 static sprite_t normalmap_sprites[MAX_SPRITES];
 
-// Serialization code:
-// import struct
-// codebook_path = str((filesystem_dir / modelname).with_suffix(".normals"))
-// print(f"{codebook_path=}")
-// with open(codebook_path, "wb") as f:
-//     # First dump palette in big-endian so that it can be read in with a single fread on the C side
-//     f.write(struct.pack(">256H", *normal_map_set.palette.colors))
-//     # Then dump the number of colors
-//     f.write(struct.pack(">i", normal_map_set.palette.num_colors))
-//     # Then dump the normals in big-endian so that it can be read in with a single fread on the C side
-//     f.write(struct.pack(">256B", *normal_map_set.palette.normals.reshape(-1)))
-//     # Now write placeholders for every string in 'sprite_names' while keeping track of file offsets
-//     offsets = []
-//     for name in normal_map_set.maps:
-//         offsets.append(f.tell())
-//         f.write(b'\x00' * 4) # Placeholder for the length of the string
-
-//     # Then write all strings but seek back to matching file offets to write the actual string start offset
-//     for i, name in enumerate(normal_map_set.maps):
-//         print("writing", i, name)
-//         old = f.tell()
-//         f.seek(offsets[i])
-//         f.write(struct.pack(">i", old)) # Write the actual string start offset
-//         f.seek(old)
-//         print("name:", name.encode('utf-8'))
-//         f.write(name.encode('utf-8'))
-//         f.write(b'\x00') # NUL terminated
+#define DECODE_RELATIVE_PTR(ptr) \
+    ((void*)((char*)(&ptr) + (ptrdiff_t)ptr))
 
 
 normalmap_set_t* normalmap_set_read(FILE* fp) {
@@ -58,34 +35,29 @@ normalmap_set_t* normalmap_set_read(FILE* fp) {
     uint8_t* data = malloc(numbytes);
 
     // Read the whole struct with one fread
-    debugf("sizes:\n");
-    debugf("%u\n", sizeof(codebook_palette_t));
-    debugf("offsets:\n");
-    debugf("%u\n", offsetof(codebook_palette_t, colors));
-    debugf("%u\n", offsetof(codebook_palette_t, num_colors));
-    debugf("%u\n", offsetof(codebook_palette_t, normals));
-    debugf("%u\n", offsetof(normalmap_set_t, num_maps));
-    debugf("%u\n", offsetof(normalmap_set_t, maps));
     fread(data, 1, numbytes, fp);
 
     normalmap_set_t* set = (normalmap_set_t*)&data[0];
     // fread(set, sizeof(normalmap_set_t), 1, fp);
     debugf("num maps: %ld\n", set->num_maps);
-    debugf("maps content before: %lu\n", (uint32_t)set->maps);
-    assert((int32_t)set->maps == 4);
+    debugf("maps content before: %lu\n", (uint32_t)set->paths);
+    assert((int32_t)set->paths == 8);
     debugf("data: %p\n", data);
-    set->maps = (const char**)((uint8_t*)&set->maps + (int32_t)set->maps);
-    debugf("maps content after: %lu = %p, diff: %d\n", (uint32_t)set->maps, (void*)set->maps, (uint8_t*)set->maps - data);
+    set->paths = DECODE_RELATIVE_PTR(set->paths); // (const char**)((uint8_t*)&set->paths + (int32_t)set->paths);
+    debugf("maps content after: %lu = %p, diff: %d\n", (uint32_t)set->paths, (void*)set->paths, (uint8_t*)set->paths - data);
 
-    // set->maps = calloc(set->num_maps, sizeof(set->maps[0]));
-    // debugf("tell: %ld\n", ftell(fp));
-    // fread(set->maps, sizeof(set->maps[0]), set->num_maps, fp);
+    set->sprites = calloc(set->num_maps, sizeof(set->sprites[0]));
+
     for (int32_t i = 0; i < set->num_maps; i++) {
-        // fseek(fp, (uint32_t)set->maps[i], SEEK_SET);
-        debugf("%ld: ofs=%lu\n", i, (uint32_t)set->maps[i]);
-        set->maps[i] = (const char*)((uint8_t*)&set->maps[i] + (int32_t)set->maps[i]);
-        debugf("%ld: ofs=%lu, '%s'\n", i, (uint32_t)set->maps[i], set->maps[i]);
-        // normalmap_sprites[i] =
+        debugf("%ld: ofs=%lu\n", i, (uint32_t)set->paths[i]);
+        set->paths[i] = (const char*)((uint8_t*)&set->paths[i] + (int32_t)set->paths[i]);
+        debugf("%ld: ofs=%lu, '%s'\n", i, (uint32_t)set->paths[i], set->paths[i]);
+        set->sprites[i] = sprite_load(set->paths[i]);
+        if (!set->sprites[i]) {
+            debugf("Failed to load sprite at %s\n", set->paths[i]);
+            continue;
+        }
+        debugf("sprite size: %dx%d\n", set->sprites[i]->width, set->sprites[i]->height);
     }
     return set;
 }
