@@ -568,3 +568,35 @@ void t3d_model_bvh_query_frustum(const T3DBvh *bvh, const T3DFrustum *frustum) {
   ctxBasePtr = (uint32_t)(char*)bvh;
   bvh_query_node(bvh->nodes);
 }
+
+static void bvh_query_node_with_mask(const T3DBvhNode *node, uint8_t inside_mask) {
+  int dataCount = node->value & 0b1111;
+  int offset = (int16_t)node->value >> 4;
+
+  if(dataCount == 0) {
+    // the mask gets updated by the query if the AABB was inside any plane
+    if (t3d_planes_vs_aabb_s16(ctxFrustum, node->aabbMin, node->aabbMax, &inside_mask)) {
+        bvh_query_node_with_mask(&node[offset], inside_mask);
+        bvh_query_node_with_mask(&node[offset + 1], inside_mask);
+    }
+    return;
+  }
+
+  // Leaf node: mark visible objects
+  int offsetEnd = offset + dataCount;
+  while(offset < offsetEnd) {
+    T3DObject* obj = (T3DObject*)(ctxBasePtr - (ctxData[offset++].objectPtr << 2));
+    uint8_t mask = inside_mask; // don't need the updates now, just faster tests
+    if(t3d_planes_vs_aabb_s16(ctxFrustum, obj->aabbMin, obj->aabbMax, &mask)) {
+      obj->isVisible = true;
+    }
+  }
+}
+
+void t3d_model_bvh_query_frustum_deep(const T3DBvh *bvh, const T3DFrustum *frustum) {
+  const T3DBvhData *data = (T3DBvhData*)&bvh->nodes[bvh->nodeCount]; // data starts right after nodes
+  ctxFrustum = frustum;
+  ctxData = data;
+  ctxBasePtr = (uint32_t)(char*)bvh;
+  bvh_query_node_with_mask(bvh->nodes, 0);
+}

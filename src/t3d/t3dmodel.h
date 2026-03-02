@@ -486,6 +486,24 @@ static inline const T3DBvh* t3d_model_bvh_get(const T3DModel *model) {
  */
 void t3d_model_bvh_query_frustum(const T3DBvh *bvh, const T3DFrustum *frustum);
 
+/**
+ * Queries the BVH of a model with a frustum.
+ * Note that the BVH is in model space, so the frustum may need to be transformed before.
+ * This will mark all objects in the BVH as visible via the 'isVisible' flag.
+ * Note that you need to first set all to false before calling this.
+ *
+ * It returns identical results to #t3d_model_bvh_query_frustum but faster in BVHs
+ * with many objects and thus deep tree structures.
+ *
+ * This variant tracks which frustum planes are fully inside for each node,
+ * allowing children to skip re-checking those planes.
+ *
+ * @param bvh BVH to check
+ * @param frustum frustum to check against
+ * @return
+ */
+void t3d_model_bvh_query_frustum_deep(const T3DBvh *bvh, const T3DFrustum *frustum);
+
 #ifdef __cplusplus
 }
 #endif
