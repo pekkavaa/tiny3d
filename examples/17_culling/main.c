@@ -59,6 +59,18 @@ int main()
   bool displayBVH = false;
   bool showInfoScreen = true;
 
+  // BVH traversal method selection
+  typedef enum {
+    BVH_METHOD_STANDARD = 0,
+    BVH_METHOD_DEEP,
+    BVH_METHOD_COUNT
+  } BvhMethod;
+  BvhMethod currentBvhMethod = BVH_METHOD_STANDARD;
+  const char* bvhMethodNames[] = {
+    "Standard",
+    "Deep (Plane Mask)"
+  };
+
   // In order to cull, we must either not record the entire mesh, or do so with individual objects.
   // Here we do the latter. To still take advantage cross-material optimizations, we only record objects
   for(int m=0; m<MODEL_COUNT; ++m) {
@@ -103,6 +115,11 @@ int main()
     camDir.v[1] = fm_sinf(camRotY);
     camDir.v[2] = fm_sinf(camRotX) * fm_cosf(camRotY);
     t3d_vec3_norm(&camDir);
+
+    if(pressed.c_left) {
+      currentBvhMethod = (currentBvhMethod + 1) % BVH_METHOD_COUNT;
+      debugf("BVH method: %s\n", bvhMethodNames[currentBvhMethod]);
+    }
 
     if(joypad.btn.z) {
       camRotXTarget += (float)joypad.stick_x * camRotSpeed;
@@ -158,7 +175,16 @@ int main()
 
       const T3DBvh *bvh = t3d_model_bvh_get(model); // BVHs are optional, use '--bvh' in the gltf importer (see Makefile)
       if(bvh) {
-        t3d_model_bvh_query_frustum(bvh, &frustum);
+        // Select BVH traversal method based on runtime selection
+        switch(currentBvhMethod) {
+          case BVH_METHOD_DEEP:
+            t3d_model_bvh_query_frustum_deep(bvh, &frustum);
+            break;
+          case BVH_METHOD_STANDARD:
+          default:
+            t3d_model_bvh_query_frustum(bvh, &frustum);
+            break;
+        }
       } else {
         // without BVH, you can still iterate over all objects and perform a manual frustum checks
         T3DModelIter it = t3d_model_iter_create(model, T3D_CHUNK_TYPE_OBJECT);
@@ -168,6 +194,7 @@ int main()
       }
     }
 
+    uint64_t cullTimeUs = TICKS_TO_US(get_ticks() - ticksStart);
     ticks += get_ticks() - ticksStart;
 
     // Debug top-down view, since visibility was already calculated
@@ -235,14 +262,15 @@ int main()
       t3d_debug_printf(18, 18, "Tris: %d", triCount);
       t3d_debug_printf(320-96, 18, "%.2f FPS", display_get_fps());
     }
-    t3d_debug_printf(18, 240-24, "BVH: %lluus (%d/%d)", TICKS_TO_US(ticks / frame), visibleObjects, totalObjects);
+    t3d_debug_printf(18, 240-24, "BVH: %lluus (%d/%d)", cullTimeUs, visibleObjects, totalObjects);
+    t3d_debug_printf(18, 240-38, "Method: %s", bvhMethodNames[currentBvhMethod]);
 
     if(showInfoScreen) {
       const char* INFO[] = {
         "A: Toggle debug view", "Start: Toggle BVH debug",
-        "Z + Stick: Rotate", "Stick: Move",
-        "C-U/D: Move up/down", "L/R: change model",
-        " ( Press B to close )"
+        "C-L: Switch BVH method", "Z + Stick: Rotate",
+        "Stick: Move", "C-U/D: Move up/down",
+        "L/R: change model", " ( Press B to close )"
       };
       for(int i=0; i<7; ++i) {
         t3d_debug_printf(74, 70+(i*14), INFO[i]);
