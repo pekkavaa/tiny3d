@@ -488,6 +488,8 @@ bool t3d_frustum_vs_aabb(const T3DFrustum *frustum, const T3DVec3 *min, const T3
  */
 bool t3d_frustum_vs_aabb_s16(const T3DFrustum *frustum, const int16_t min[3], const int16_t max[3]);
 
+bool t3d_frustum_vs_aabb_test_mask_s16(const T3DFrustum *frustum, const int16_t min[3], const int16_t max[3], uint8_t inside_mask);
+
 /**
  * Checks if an s16 AABB is inside a frustum but skipping given plane checks.
  * The 6-bit 'inside_mask' tells which frustum planes the AABB is assumed be on the positive side of.
@@ -498,7 +500,7 @@ bool t3d_frustum_vs_aabb_s16(const T3DFrustum *frustum, const int16_t min[3], co
  * @param inside_mask planes to skip
  * @return true if the AABB is inside the frustum
  */
-bool t3d_planes_vs_aabb_s16(const T3DFrustum *frustum, const int16_t min[3], const int16_t max[3], uint8_t* inside_mask);
+bool t3d_frustum_vs_aabb_update_mask_s16(const T3DFrustum *frustum, const int16_t min[3], const int16_t max[3], uint8_t* inside_mask);
 
 /**
  * Checks if a Sphere is inside a frustum.

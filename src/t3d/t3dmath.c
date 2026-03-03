@@ -137,10 +137,35 @@ bool t3d_frustum_vs_aabb_s16(const T3DFrustum *frustum, const int16_t min[3], co
   return true;
 }
 
-bool t3d_planes_vs_aabb_s16(const T3DFrustum *frustum, const int16_t min[3], const int16_t max[3], uint8_t* inside_mask)
+bool t3d_frustum_vs_aabb_test_mask_s16(const T3DFrustum *frustum, const int16_t min[3], const int16_t max[3], uint8_t inside_mask)
 {
-  const T3DVec4* planes = frustum->planes;
+  for(int i=0; i<6; ++i) {
+    if(inside_mask & (1u << i)) {
+      continue;
+    }
+    float p0Min = frustum->planes[i].v[0] * (min[0]);
+    float p0Max = frustum->planes[i].v[0] * (max[0]);
+    float p1Min = frustum->planes[i].v[1] * (min[1]);
+    float p1Max = frustum->planes[i].v[1] * (max[1]);
 
+    float p2MinAndW = -frustum->planes[i].v[3] - frustum->planes[i].v[2] * (min[2]);
+    if(p0Min + p1Min > p2MinAndW) continue;
+    if(p0Max + p1Min > p2MinAndW) continue;
+    if(p0Min + p1Max > p2MinAndW) continue;
+    if(p0Max + p1Max > p2MinAndW) continue;
+
+    float p2MaxAndW = -frustum->planes[i].v[3] - frustum->planes[i].v[2] * (max[2]);
+    if(p0Min + p1Min > p2MaxAndW) continue;
+    if(p0Max + p1Min > p2MaxAndW) continue;
+    if(p0Min + p1Max > p2MaxAndW) continue;
+    if(p0Max + p1Max > p2MaxAndW) continue;
+    return false;
+  }
+  return true;
+}
+
+bool t3d_frustum_vs_aabb_update_mask_s16(const T3DFrustum *frustum, const int16_t min[3], const int16_t max[3], uint8_t* inside_mask)
+{
   for(int i=0; i<6; ++i) {
     if(*inside_mask & (1u << i)) {
       continue;

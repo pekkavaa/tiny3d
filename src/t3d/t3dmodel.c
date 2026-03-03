@@ -574,8 +574,7 @@ static void bvh_query_node_with_mask(const T3DBvhNode *node, uint8_t inside_mask
   int offset = (int16_t)node->value >> 4;
 
   if(dataCount == 0) {
-    // the mask gets updated by the query if the AABB was inside any plane
-    if (t3d_planes_vs_aabb_s16(ctxFrustum, node->aabbMin, node->aabbMax, &inside_mask)) {
+    if (t3d_frustum_vs_aabb_update_mask_s16(ctxFrustum, node->aabbMin, node->aabbMax, &inside_mask)) {
         bvh_query_node_with_mask(&node[offset], inside_mask);
         bvh_query_node_with_mask(&node[offset + 1], inside_mask);
     }
@@ -586,8 +585,7 @@ static void bvh_query_node_with_mask(const T3DBvhNode *node, uint8_t inside_mask
   int offsetEnd = offset + dataCount;
   while(offset < offsetEnd) {
     T3DObject* obj = (T3DObject*)(ctxBasePtr - (ctxData[offset++].objectPtr << 2));
-    uint8_t mask = inside_mask; // don't need the updates now, just faster tests
-    if(t3d_planes_vs_aabb_s16(ctxFrustum, obj->aabbMin, obj->aabbMax, &mask)) {
+    if(t3d_frustum_vs_aabb_test_mask_s16(ctxFrustum, obj->aabbMin, obj->aabbMax, inside_mask)) {
       obj->isVisible = true;
     }
   }
